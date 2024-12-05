@@ -21,42 +21,8 @@ const marketplaceContract = new ethers.Contract(marketplaceContractAddress, MARK
 // MoonPay setup
 const moonPay = new MoonPay(process.env.MOONPAY_SECRET_KEY);
 
-// Function to get the current ETH price in EUR from MoonPay
-const getCurrentEthPriceInEur = async () => {
-  try {
-    const response = await axios.get(`https://api.moonpay.com/v3/currencies`);
-    const currencies = response.data;
 
-    const ethCurrency = currencies.find(currency => currency.code === 'eth');
-    const eurCurrency = currencies.find(currency => currency.code === 'eur');
-    console.log("ethCurrency.price",ethCurrency.price)
-    console.log("eurCurrency.price", eurCurrency.price)
-    if (ethCurrency && eurCurrency) {
-      const ethPriceInEur = ethCurrency.price / eurCurrency.price; // Calculate ETH price in EUR
-      return ethPriceInEur;
-    } else {
-      throw new Error('ETH or EUR currency not found');
-    }
-  } catch (error) {
-    console.error('Error fetching ETH price from MoonPay:', error);
-    throw new Error('Unable to fetch ETH price');
-  }
-};
-
-
-// New API endpoint to get the current ETH price in EUR
-app.get('/current-eth-price', async (req, res) => {
-  try {
-    const ethPriceInEur = await getCurrentEthPriceInEur();
-    res.status(200).json({ ethPriceInEur });
-  } catch (error) {
-    console.error('Error fetching current ETH price:', error);
-    res.status(500).json({ error: 'Failed to fetch current ETH price' });
-  }
-});
-
-// Route to buy ETH with Euros
-app.get('/buy-eth', async (req, res) => {
+app.get('/buy-eth', (req, res) => {
   const { walletAddress, amount, email } = req.query;
 
   if (!walletAddress || !amount || !email) {
@@ -65,17 +31,20 @@ app.get('/buy-eth', async (req, res) => {
 
   const params = {
     apiKey: process.env.MOONPAY_API_KEY,
-    baseCurrencyCode: 'EUR',
-    currencyCode: 'eth',
-    walletAddress: walletAddress,
-    baseCurrencyAmount: amount,
-    email: email,
-    paymentMethod: 'credit_debit_card',
-    redirectURL: 'http://localhost:3000/transaction',
+    baseCurrencyCode: 'EUR',     
+    currencyCode: 'eth',        
+    walletAddress: walletAddress, 
+    baseCurrencyAmount: amount,   
+    email: email,                 
+    paymentMethod: 'credit_debit_card', 
+    redirectURL: 'http://localhost:3000/transaction', 
   };
 
   try {
+    // Generate signed URL with the configured journey
     const signedURL = moonPay.url.generate({ flow: 'buy', params });
+
+    // Send back the signed URL
     res.json({ signedURL });
   } catch (error) {
     console.error('Error generating MoonPay URL:', error);
@@ -83,16 +52,41 @@ app.get('/buy-eth', async (req, res) => {
   }
 });
 
-// Transaction callback route
 app.get('/transaction', (req, res) => {
   const { transactionId, transactionStatus } = req.query;
 
+  // Process the transaction based on the ID and status
   if (transactionStatus === 'completed') {
-    res.send(`Transaction ${transactionId} completed successfully!`);
+      // Handle successful transaction logic
+      res.send(`Transaction ${transactionId} completed successfully!`);
   } else {
-    res.send(`Transaction ${transactionId} status: ${transactionStatus}`);
+      // Handle other transaction statuses
+      res.send(`Transaction ${transactionId} status: ${transactionStatus}`);
   }
 });
+// Fetch ETH to EUR conversion rate
+async function fetchEthToEurRate() {
+  try {
+    const response = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=eur');
+    return response.data.ethereum.eur;
+  } catch (error) {
+    console.error('Error fetching ETH to EUR rate:', error);
+    throw new Error('Unable to fetch exchange rate');
+  }
+}
+
+// API Route to fetch ETH to EUR rate
+app.get('/eth-to-eur', async (req, res) => {
+  try {
+    const rate = await fetchEthToEurRate();
+    res.status(200).json({ ethToEurRate: rate });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch ETH to EUR rate' });
+  }
+});
+
+
+
 
 // Fetch listed NFTs from the marketplace
 app.get('/listed-nfts', async (req, res) => {
@@ -105,6 +99,8 @@ app.get('/listed-nfts', async (req, res) => {
       nftContract: nft.nftContract,
       isListed: nft.isListed,
     }));
+
+
 
     res.status(200).json(result);
   } catch (error) {
@@ -149,15 +145,17 @@ app.post('/approve', async (req, res) => {
   }
 });
 
-// Handle MoonPay webhook notifications
+
 app.post('/moonpay-webhook', express.json(), async (req, res) => {
   const { status, walletAddress, currencyCode } = req.body;
 
   if (status === 'completed' && currencyCode === 'eth') {
     try {
       const balance = await provider.getBalance(walletAddress);
-      const nftPriceInEth = ethers.utils.parseEther('0.05'); // Define how much ETH the user needs to buy the NFT
-
+        console.log(balance)
+      // Define how much ETH the user needs to buy the NFT (example: 0.05 ETH)
+      const nftPriceInEth = ethers.utils.parseEther('0.05');
+      console.log(nftPriceInEth )
       if (balance.gte(nftPriceInEth)) {
         return res.status(200).json({ message: 'Payment successful, user can proceed with NFT purchase!' });
       } else {
@@ -175,16 +173,13 @@ app.post('/moonpay-webhook', express.json(), async (req, res) => {
 // Route to buy an NFT
 app.post('/buy-nft', async (req, res) => {
   try {
-    const { walletAddress, tokenId, nftContractAddress, priceInEur } = req.body;
-    if (!walletAddress || !tokenId || !priceInEur || !nftContractAddress) {
-      return res.status(400).json({ error: 'Wallet address, tokenId, priceInEur, and nftContractAddress are required' });
+    const { walletAddress, tokenId, nftContractAddress, priceInEth } = req.body;
+    if (!walletAddress || !tokenId || !priceInEth || !nftContractAddress) {
+      return res.status(400).json({ error: 'Wallet address, tokenId, priceInEth, and nftContractAddress are required' });
     }
 
-    // Fetch the current ETH price in EUR
-    const ethPriceInEur = await getCurrentEthPriceInEur();
-    const nftPriceInEth = ethers.utils.parseEther((priceInEur / ethPriceInEur).toFixed(18)); // Convert price from EUR to ETH
-
     const balance = await provider.getBalance(walletAddress);
+    const nftPriceInEth = ethers.utils.parseEther(priceInEth.toString());
 
     if (balance.gte(nftPriceInEth)) {
       const tx = await marketplaceContract.buyNFT(nftContractAddress, tokenId, { value: nftPriceInEth, from: walletAddress });
